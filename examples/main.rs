@@ -1,7 +1,7 @@
 #![feature(const_generics)]
 #![feature(const_evaluatable_checked)]
 #![feature(type_name_of_val)]
-#![allow(incomplete_features)]
+// #![allow(incomplete_features)]
 
 
 use const_writer::{ConstWriter, ConstWrite, ConstWriterAdapter};
