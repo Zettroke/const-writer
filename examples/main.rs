@@ -22,13 +22,46 @@ fn main() {
         // increase writer size with check
         write_struct(writer.convert());
     }
+    println!("{:?}", buff);
+
     let mut vec = Vec::new();
     write_struct(vec.const_writer());
     write_struct(vec.const_writer());
     vec.const_writer::<24>().write_slice(&[11u8; 24]);
 
+    write_conditional_len(vec.const_writer(), false);
+    write_conditional_len(vec.const_writer(), true);
 
-    println!("{:?}", buff);
+
     println!("{:?}", vec);
     println!("{:?}", vec.capacity());
+
+    let mut vec = vec![];
+
+    vec.const_writer::<5>()
+        .write_u32_le(123)
+        .write_u8_le(1)
+        .convert::<10>()
+        .write_u32_le(124)
+        .write_u8_le(24);
+
+    write_conditional_len(vec.const_writer(), true);
+
+    println!("{:?}", vec);
+    println!("{:?}", vec.capacity());
+}
+
+fn write_conditional_len<T: ConstWriterAdapter>(writer: ConstWriter<T, 32>, flag: bool) {
+    let writer = writer.write_u32_le(24);
+
+    let writer = if flag {
+        writer
+            .write_u64_le(32)
+            .write_u128_le(64)
+    } else {
+        writer.convert() // rust infer same len as top branch
+    };
+
+    assert_eq!(writer.remaining(), 4);
+    writer.write_u32_le(48);
 }
