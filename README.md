@@ -72,7 +72,7 @@ write:
 	subq	$88, %rsp
 	movq	%rsi, %rdx
 	cmpq	$30, %rsi
-	jbe	    .LBB2_1 # panic
+	jbe	.LBB2_1 # panic
 	movq	%rdi, %rax
 	movb	$1, (%rdi)
 	movw	$515, 1(%rdi)                   # imm = 0x203
