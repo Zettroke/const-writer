@@ -3,7 +3,10 @@ name = "const-writer"
 version = "0.1.0"
 authors = ["Zettroke <skorostnoy2000@yandex.ru>"]
 edition = "2018"
-
+repository = "https://github.com/Zettroke/const-writer/"
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/Zettroke"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
