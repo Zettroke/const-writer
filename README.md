@@ -7,13 +7,11 @@ allow you to write constant amount of bytes without ant runtime checks
 use const_writer::ConstWrite;
 fn main() {
     let mut vec = vec![];
-    {
-        let writer = vec.const_writer::<10>() // reserve 8 bytes in vec
-            .write_u32_le(12)  // no runtime checks
-            .write_u32_le(34); // no runtime checks
+    let writer = vec.const_writer::<10>() // reserve 10 bytes in vec
+        .write_u32_le(12)  // no runtime checks
+        .write_u32_le(34); // no runtime checks
 
-        assert_eq!(writer.remaining(), 2);
-    }
+    assert_eq!(writer.remaining(), 2);
     assert_eq!(vec.len(), 8);
     assert_eq!(&vec[0..8], &[12, 0, 0, 0, 34, 0, 0, 0]);
 }

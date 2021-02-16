@@ -1,11 +1,9 @@
-use crate::{ConstWriterAdapter, ConstWrite, ConstWriter};
-use core::marker::PhantomData;
+use crate::{ConstWriterAdapter, ConstWrite, ConstWriterAdapterCreate};
 
 /// Wrapper for `&mut [u8]`. Advances wrapped slice reference on drop.
 /// pub user is not intended
 /// ```
-/// use crate::const_writer::SliceWriterAdapter;
-/// use const_writer::ConstWriterAdapter;
+/// use const_writer::{ConstWriterAdapter, ConstWriterAdapterCreate};
 /// use const_writer::slice::SliceWriterAdapter;
 ///
 /// let mut buf = [0u8; 20];
@@ -14,7 +12,7 @@ use core::marker::PhantomData;
 ///     let mut adapter = SliceWriterAdapter::new::<20>(&mut ref_buf); // checks slice len to be > 20
 ///     adapter
 ///         .write(&[1u8; 2])
-///         .write(&[2u8; 4]); // `buf` is unchanged, but inner pointer is advanced
+///         .write(&[2u8; 4]); // `ref_buf` is unchanged, but inner pointer is advanced
 /// };
 /// //after adapter dropped pointer is advanced
 /// assert_eq!(ref_buf.len(), 14);
@@ -28,9 +26,8 @@ pub struct SliceWriterAdapter<'a, 'inner> {
 
 }
 
-impl<'a, 'inner> ConstWriterAdapter<'a> for SliceWriterAdapter<'a, 'inner> {
-    type Inner = &'inner mut [u8];
-    unsafe fn new<const N: usize>(slice: &'a mut Self::Inner) -> Self {
+unsafe impl<'a, 'inner> ConstWriterAdapterCreate<'a, &'inner mut [u8]> for SliceWriterAdapter<'a, 'inner> {
+    unsafe fn new<const N: usize>(slice: &'a mut &'inner mut [u8]) -> Self {
         assert!(
             slice.len() >= N,
             "slice too short: {} < {}",
@@ -43,7 +40,9 @@ impl<'a, 'inner> ConstWriterAdapter<'a> for SliceWriterAdapter<'a, 'inner> {
             ptr
         }
     }
+}
 
+impl<'a, 'inner> ConstWriterAdapter for SliceWriterAdapter<'a, 'inner> {
     // Because we have exclusive access to slice pointer we can wait with it's modification until adapter is dropped
     unsafe fn write<const N: usize>(mut self, value: &[u8; N]) -> Self {
         core::ptr::copy_nonoverlapping(value.as_ptr(), self.ptr, N);
@@ -73,19 +72,7 @@ impl<'a, 'inner> Drop for SliceWriterAdapter<'a, 'inner> {
     }
 }
 
-impl<'a, 'inner> ConstWrite<'a, SliceWriterAdapter<'a, 'inner>> for &'inner mut [u8] {
-    /// Get const writer for `N` bytes. Panics if slice too short
-    fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<SliceWriterAdapter<'a, 'inner>, { N }> {
-        // `SliceWriterAdapter::from` checks that slice len greater or equal than `N`.
-        // Because we ensure that ConstWriter never writes more than `N` bytes
-        unsafe {
-            ConstWriter {
-                writer_adapter: SliceWriterAdapter::new::<{ N }>(self),
-                _marker: PhantomData
-            }
-        }
-    }
-}
+impl<'a, 'inner> ConstWrite<'a, SliceWriterAdapter<'a, 'inner>> for &'inner mut [u8] {}
 
 
 

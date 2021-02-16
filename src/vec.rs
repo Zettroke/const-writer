@@ -1,26 +1,25 @@
-#![feature(test)]
-use crate::{ConstWriter, ConstWriterAdapter, ConstWrite};
+use crate::{ConstWriterAdapter, ConstWrite, ConstWriterAdapterCreate};
 
 extern crate alloc;
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 pub struct VecWriterAdapter<'a> {
     vec: &'a mut Vec<u8>,
     ptr: *mut u8
 }
 
-impl<'a> ConstWriterAdapter<'a> for VecWriterAdapter<'a> {
-    type Inner = Vec<u8>;
-    unsafe fn new<const N: usize>(value: &'a mut Self::Inner) -> Self {
-        value.reserve(N);
-        let ptr = core::mem::transmute(value.as_mut_ptr().add(value.len()));
+unsafe impl<'a> ConstWriterAdapterCreate<'a, Vec<u8>> for VecWriterAdapter<'a> {
+    unsafe fn new<const N: usize>(buff: &'a mut Vec<u8>) -> Self {
+        buff.reserve(N);
+        let ptr = core::mem::transmute(buff.as_mut_ptr().add(buff.len()));
         Self {
-            vec: value,
+            vec: buff,
             ptr
         }
     }
+}
 
+impl<'a> ConstWriterAdapter for VecWriterAdapter<'a> {
     unsafe fn write<const N: usize>(mut self, value: &[u8; N]) -> Self {
         core::ptr::copy_nonoverlapping(value.as_ptr(), self.ptr, N);
         self.ptr = self.ptr.add(N);
@@ -46,19 +45,7 @@ impl<'a> Drop for VecWriterAdapter<'a> {
     }
 }
 
-impl<'a> ConstWrite<'a, VecWriterAdapter<'a>> for Vec<u8> {
-    /// Get const writer for `N` bytes. Reserve `N` bytes in vector
-    fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<'a, VecWriterAdapter<'a>, { N }> {
-        // `VecWriterAdapter::from` ensure that vec can hold `N` bytes.
-        // Because we ensure that ConstWriter never writes more than `N` bytes
-        unsafe {
-            ConstWriter {
-                writer_adapter: VecWriterAdapter::new::<{ N }>(self),
-                _marker: PhantomData
-            }
-        }
-    }
-}
+impl<'a> ConstWrite<'a, VecWriterAdapter<'a>> for Vec<u8> {}
 
 #[cfg(test)]
 mod tests {

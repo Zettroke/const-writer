@@ -55,41 +55,34 @@
 //! assert_eq!(buff, [34, 0, 2, 0, 3, 0, 4, 0, 5, 0, 0, 0, 0, 0, 0, 0]);
 //! ```
 //!
-//!
-//!
-// #[cfg(feature = "std")]
-// use std::mem;
-// #[cfg(not(feature = "std"))]
-// use core::mem;
 
-use core::marker::PhantomData;
-
-pub trait IsTrue {}
-pub trait IsFalse {}
-
-pub struct Assert<const CHECK: bool> {}
-
-impl IsTrue for Assert<true> {}
-impl IsFalse for Assert<false> {}
+/// Trait for creating `ConstWriterAdapter`
+/// Creation moved to separate trait to omit lifetime parameter on ConstWriter
+pub unsafe trait ConstWriterAdapterCreate<'a, T: ?Sized> {
+    /// # Safety
+    /// You must ensure that underlying buffer have space for at least `N` bytes.
+    unsafe fn new<const N: usize>(buff: &'a mut T) -> Self;
+}
 
 /// Source of all performance of crate. Provide unsafe interface to underlying buffer.
 ///
 /// Because const generics expressions in traits works really bad,
 /// this adapter doesn't has generic len param, so write is basically unchecked write to array.
 /// This adapter must be used within [`ConstWriter`] because it holds and tracks buffer length
-pub trait ConstWriterAdapter<'a> {
-    type Inner;
-    unsafe fn new<const N: usize>(v: &'a mut Self::Inner) -> Self;
-    /// Advance inner buffer by `value` bytes
+pub trait ConstWriterAdapter {
+    /// Write bytes and advances inner buffer
     ///
     /// # Safety
     /// Unsafe because with current `const_generics` and `const_evaluatable_checked` we can't
     /// define trait which returns self with calculated const generic param.
     ///
-    /// You should make sure that in total you advance less or equal than `N` bytes used in from method.
+    /// You should make sure that in total you advance less or equal than `N` bytes
     unsafe fn write<const N: usize>(self, value: &[u8; N]) -> Self;
 
-    /// Checks if we have enough space to write `M` bytes in underlying buffer
+    /// Ensures that underlying buffer have space for `M` additional bytes
+    /// # Example
+    /// If 5 bytes were written to buffer, then `grow::<10>()` will ensure that
+    /// underlying buffer have capacity at least 15
     unsafe fn grow<const M: usize>(self) -> Self;
 }
 
@@ -98,19 +91,19 @@ pub mod slice;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub mod vec;
 
-
-pub struct ConstWriter<'a, T: ConstWriterAdapter<'a>, const N: usize> {
+///
+/// Writer that keeping track of bytes space left using const_generic params.
+///
+pub struct ConstWriter<T: ConstWriterAdapter, const N: usize> {
     writer_adapter: T,
-    _marker: PhantomData<&'a ()>
 }
 
 macro_rules! implement_write {
     ($name:ident, $type:ty, $endian:ident) => {
-        pub fn $name(self, value: $type) ->ConstWriter<'a, T, {N - core::mem::size_of::<$type>()}> {
+        pub fn $name(self, value: $type) ->ConstWriter<T, {N - core::mem::size_of::<$type>()}> {
             unsafe {
                 ConstWriter {
                     writer_adapter: self.writer_adapter.write(&value.$endian()),
-                    _marker: PhantomData
                 }
             }
         }
@@ -118,40 +111,30 @@ macro_rules! implement_write {
     }
 }
 
-impl<'a, T: ConstWriterAdapter<'a>, const N: usize> ConstWriter<'a, T, {N}> {
+impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
     /// Changes length of [`ConstWriter`] to `M`.
     ///
     /// If `M` <= `N` then no checks or allocation invoked
     ///
-    /// If `M` > `N` there is check for slices and reserve for vectors
-    pub fn convert<const M: usize>(self) -> ConstWriter<'a, T, {M}> {
+    /// If `M` > `N` there adapter ensures that underlying buffer have space for `M` more bytes.
+    pub fn convert<const M: usize>(self) -> ConstWriter<T, {M}> {
         if M <= N { // shrink
             ConstWriter {
                 writer_adapter: self.writer_adapter,
-                _marker: PhantomData
+
             }
         } else {
             unsafe {
                 ConstWriter { // grow
                     writer_adapter: self.writer_adapter.grow::<{M}>(),
-                    _marker: PhantomData
+
                 }
             }
         }
     }
 }
 
-// impl<'a, T: ConstWriterAdapter> ConstWrite<'a, T> for T::Inner {
-//     fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<T, { N }> {
-//         unsafe {
-//             ConstWriter {
-//                 writer_adapter: T::new::<{ N }>(self)
-//             }
-//         }
-//     }
-// }
-
-impl<'a, T: ConstWriterAdapter<'a>, const N: usize> ConstWriter<'a, T, {N}> {
+impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
     implement_write!(write_u8_le, u8, to_le_bytes);
     implement_write!(write_u16_le, u16, to_le_bytes);
     implement_write!(write_u32_le, u32, to_le_bytes);
@@ -182,32 +165,36 @@ impl<'a, T: ConstWriterAdapter<'a>, const N: usize> ConstWriter<'a, T, {N}> {
     implement_write!(write_f32_le, f32, to_le_bytes);
     implement_write!(write_f64_le, f64, to_le_bytes);
 
+    /// Helper to access const_generic param
     pub fn remaining(&self) -> usize {
         N
     }
 }
 
-impl<'a, T: ConstWriterAdapter<'a>, const N: usize> ConstWriter<'a, T, {N}> {
-    pub fn write_slice<const M: usize>(self, value: &[u8; M]) -> ConstWriter<'a, T, { N-M }>/* where Assert::<{N >= M}>: IsTrue*/ {
+impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
+    pub fn write_slice<const M: usize>(self, value: &[u8; M]) -> ConstWriter<T, { N-M }> {
         unsafe {
             ConstWriter {
                 writer_adapter: self.writer_adapter.write(value),
-                _marker: PhantomData
+
             }
         }
     }
 }
 
-pub trait ConstWrite<'a, T: ConstWriterAdapter<'a>> {
-    /// Get [`ConstWriter`] to write `N` bytes. Performs checks/allocations so at least `N` bytes
-    fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<'a, T, {N}>;
+pub trait ConstWrite<'a, T: ConstWriterAdapter + ConstWriterAdapterCreate<'a, Self>> {
+    /// Get [`ConstWriter`] to write `N` bytes.
+    ///
+    /// Because contract on `ConstWriterAdapterCreate::new` we can be sure that underlying buffer
+    /// can accept at least `N` bytes. And because write methods reduces `N` as they write to buffer
+    /// we can be sure that code which writes more than`N` bytes wont compile
+    /// (N is usize so negative value will be compile error)
+    fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<T, {N}> {
+        unsafe {
+            ConstWriter {
+                writer_adapter: T::new::<{ N }>(self)
+            }
+        }
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    extern crate test;
-    use crate::{ConstWrite};
-    use test::Bencher;
-
-
-}

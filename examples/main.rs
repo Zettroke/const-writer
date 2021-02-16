@@ -1,13 +1,13 @@
 #![feature(const_generics)]
 #![feature(const_evaluatable_checked)]
 #![feature(type_name_of_val)]
-// #![allow(incomplete_features)]
+#![allow(incomplete_features)]
 
 
 use const_writer::{ConstWriter, ConstWrite, ConstWriterAdapter};
 use const_writer::slice::SliceWriterAdapter;
 
-pub fn write_struct<'a, T: ConstWriterAdapter<'a>>(writer: ConstWriter<'a, T, 10>) -> ConstWriter<'a, T, 0> {
+pub fn write_struct<'a, T: ConstWriterAdapter>(writer: ConstWriter<T, 10>) -> ConstWriter<T, 0> {
     writer.write_u16_le(34).write_u16_le(2).write_u16_le(3).write_u16_le(4).write_u16_le(5)
 }
 
@@ -15,7 +15,7 @@ fn main() {
     let mut buff = [0u8; 24];
     let mut ref_buff = buff.as_mut() as &mut [u8];
 
-    let writer: ConstWriter<'_, SliceWriterAdapter<'_, '_>, 20> = ref_buff.const_writer::<20>();
+    let writer: ConstWriter<SliceWriterAdapter<'_, '_>, 20> = ref_buff.const_writer::<20>();
 
     // decrease writer size without check
     let writer = write_struct(writer.convert());
@@ -50,7 +50,7 @@ fn main() {
     println!("{:?}", vec.capacity());
 }
 
-fn write_conditional_len<'a, T: ConstWriterAdapter<'a>>(writer: ConstWriter<'a, T, 32>, flag: bool) {
+fn write_conditional_len<T: ConstWriterAdapter>(writer: ConstWriter<T, 32>, flag: bool) {
     let writer = writer.write_u32_le(24);
 
     let writer = if flag {
