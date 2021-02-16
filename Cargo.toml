@@ -1,6 +1,6 @@
 [package]
 name = "const-writer"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Zettroke <skorostnoy2000@yandex.ru>"]
 edition = "2018"
 repository = "https://github.com/Zettroke/const-writer/"

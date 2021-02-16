@@ -1,7 +1,17 @@
-# Const Writer
-Lets you create ConstWriter, which will check buffer size on creation and
-allow you to write constant amount of bytes without ant runtime checks
+Const Writer
+=============
+[![Documentation](https://docs.rs/const-writer/badge.svg)](https://docs.rs/const-writer)
+[![Latest version](https://img.shields.io/crates/v/const-writer.svg)](https://crates.io/crates/const-writer)
 
+####[Documentation](https://docs.rs/const-writer/badge.svg)
+
+Compile time verified byte writer for slice and vector.
+
+### Install
+```toml
+[dependencies]
+const-writer = "0.1.0"
+```
 ### Usage example
  ```rust
 use const_writer::ConstWrite;
