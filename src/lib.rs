@@ -6,18 +6,16 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-
-
 //! Provides [`ConstWriter`] abstraction to write constant amount of bytes with compile time checks
 //!
-//! Result of fun experiment with `const_generics` feature
+//! Result of fun experiment with `const_generics` and `const_evaluatable_checked` features
 //!
 //! ```
 //! use const_writer::ConstWrite;
 //!
 //! let mut vec = vec![];
 //! {
-//!     let writer = vec.const_writer::<10>() // reserve 8 bytes in vec
+//!     let writer = vec.const_writer::<10>() // reserve 10 bytes in vec
 //!         .write_u32_le(12)  // no runtime checks
 //!         .write_u32_le(34); // no runtime checks
 //!
@@ -92,7 +90,7 @@ pub mod slice;
 pub mod vec;
 
 ///
-/// Writer that keeping track of bytes space left using const_generic params.
+/// Writer that keeping track of space left using const_generic params.
 ///
 pub struct ConstWriter<T: ConstWriterAdapter, const N: usize> {
     writer_adapter: T,
@@ -182,6 +180,7 @@ impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
     }
 }
 
+/// Get [`ConstWriter`] for given type
 pub trait ConstWrite<'a, T: ConstWriterAdapter + ConstWriterAdapterCreate<'a, Self>> {
     /// Get [`ConstWriter`] to write `N` bytes.
     ///

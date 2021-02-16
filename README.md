@@ -104,3 +104,6 @@ write_struct:
 	leaq	12(%rsi), %rdx
 	retq
 ```
+
+### Features
+* Support `no_std`
