@@ -62,6 +62,8 @@
 // #[cfg(not(feature = "std"))]
 // use core::mem;
 
+use core::marker::PhantomData;
+
 pub trait IsTrue {}
 pub trait IsFalse {}
 
@@ -70,13 +72,14 @@ pub struct Assert<const CHECK: bool> {}
 impl IsTrue for Assert<true> {}
 impl IsFalse for Assert<false> {}
 
-/// Implementation must check capacity of inner buffer on creation of struct.
-/// And user must not exceed this capacity
+/// Source of all performance of crate. Provide unsafe interface to underlying buffer.
 ///
 /// Because const generics expressions in traits works really bad,
 /// this adapter doesn't has generic len param, so write is basically unchecked write to array.
 /// This adapter must be used within [`ConstWriter`] because it holds and tracks buffer length
-pub trait ConstWriterAdapter {
+pub trait ConstWriterAdapter<'a> {
+    type Inner;
+    unsafe fn new<const N: usize>(v: &'a mut Self::Inner) -> Self;
     /// Advance inner buffer by `value` bytes
     ///
     /// # Safety
@@ -90,93 +93,24 @@ pub trait ConstWriterAdapter {
     unsafe fn grow<const M: usize>(self) -> Self;
 }
 
-/// Wrapper for `&mut [u8]`. Advances wrapped slice reference on drop.
-/// pub user is not intended
-/// ```
-/// use crate::const_writer::SliceWriterAdapter;
-/// use const_writer::ConstWriterAdapter;
-///
-/// let mut buf = [0u8; 20];
-/// let mut ref_buf = &mut buf as &mut [u8];
-/// unsafe {
-///     let mut adapter = SliceWriterAdapter::new::<20>(&mut ref_buf); // checks slice len to be > 20
-///     adapter
-///         .write(&[1u8; 2])
-///         .write(&[2u8; 4]); // `buf` is unchanged, but inner pointer is advanced
-/// };
-/// //after adapter dropped pointer is advanced
-/// assert_eq!(ref_buf.len(), 14);
-/// assert_eq!(buf[..6], [1, 1, 2, 2, 2, 2])
-/// ```
-pub struct SliceWriterAdapter<'a, 'inner> {
-    /// original slice
-    slice: &'a mut &'inner mut [u8],
-    /// ptr to slice data
-    ptr: *mut u8
+pub mod slice;
 
-}
-
-impl<'a, 'inner> SliceWriterAdapter<'a, 'inner> {
-    /// Creates adapter from slice, checks it's length
-    pub unsafe fn new<const N: usize>(slice: &'a mut &'inner mut [u8]) -> Self {
-        assert!(
-            slice.len() >= N,
-            "slice too short: {} < {}",
-            slice.len(),
-            N
-        );
-        let ptr = core::mem::transmute::<_, *mut u8>(slice.as_mut_ptr());
-        Self {
-            slice,
-            ptr
-        }
-    }
-}
-
-impl<'a, 'inner> ConstWriterAdapter for SliceWriterAdapter<'a, 'inner> {
-    // Because we have exclusive access to slice pointer we can wait with it's modification until adapter is dropped
-    unsafe fn write<const N: usize>(mut self, value: &[u8; N]) -> Self {
-        core::ptr::copy_nonoverlapping(value.as_ptr(), self.ptr, N);
-        self.ptr = self.ptr.add(N);
-        self
-    }
-
-    unsafe fn grow<const M: usize>(self) -> Self {
-        let diff = self.ptr.offset_from(self.slice.as_ptr()) as usize;
-        assert!(
-            M <= self.slice.len() - diff,
-            "remaining slice too short to grow: {} < {}",
-            self.slice.len() - diff,
-            M
-        );
-        self
-    }
-}
-
-impl<'a, 'inner> Drop for SliceWriterAdapter<'a, 'inner> {
-    /// When dropping adapter we advancing slice pointer
-    fn drop(&mut self) {
-        unsafe {
-            let diff = self.ptr.offset_from(self.slice.as_ptr()) as usize;
-            *self.slice = core::slice::from_raw_parts_mut(self.ptr, self.slice.len() - diff);
-        }
-    }
-}
-
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "alloc"))]
 pub mod vec;
 
 
-pub struct ConstWriter<T: ConstWriterAdapter, const N: usize> {
-    writer_adapter: T
+pub struct ConstWriter<'a, T: ConstWriterAdapter<'a>, const N: usize> {
+    writer_adapter: T,
+    _marker: PhantomData<&'a ()>
 }
 
 macro_rules! implement_write {
     ($name:ident, $type:ty, $endian:ident) => {
-        pub fn $name(self, value: $type) ->ConstWriter<T, {N - core::mem::size_of::<$type>()}> {
+        pub fn $name(self, value: $type) ->ConstWriter<'a, T, {N - core::mem::size_of::<$type>()}> {
             unsafe {
                 ConstWriter {
-                    writer_adapter: self.writer_adapter.write(&value.$endian())
+                    writer_adapter: self.writer_adapter.write(&value.$endian()),
+                    _marker: PhantomData
                 }
             }
         }
@@ -184,28 +118,40 @@ macro_rules! implement_write {
     }
 }
 
-impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
+impl<'a, T: ConstWriterAdapter<'a>, const N: usize> ConstWriter<'a, T, {N}> {
     /// Changes length of [`ConstWriter`] to `M`.
     ///
     /// If `M` <= `N` then no checks or allocation invoked
     ///
     /// If `M` > `N` there is check for slices and reserve for vectors
-    pub fn convert<const M: usize>(self) -> ConstWriter<T, {M}> {
+    pub fn convert<const M: usize>(self) -> ConstWriter<'a, T, {M}> {
         if M <= N { // shrink
             ConstWriter {
-                writer_adapter: self.writer_adapter
+                writer_adapter: self.writer_adapter,
+                _marker: PhantomData
             }
         } else {
             unsafe {
                 ConstWriter { // grow
-                    writer_adapter: self.writer_adapter.grow::<{M}>()
+                    writer_adapter: self.writer_adapter.grow::<{M}>(),
+                    _marker: PhantomData
                 }
             }
         }
     }
 }
 
-impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
+// impl<'a, T: ConstWriterAdapter> ConstWrite<'a, T> for T::Inner {
+//     fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<T, { N }> {
+//         unsafe {
+//             ConstWriter {
+//                 writer_adapter: T::new::<{ N }>(self)
+//             }
+//         }
+//     }
+// }
+
+impl<'a, T: ConstWriterAdapter<'a>, const N: usize> ConstWriter<'a, T, {N}> {
     implement_write!(write_u8_le, u8, to_le_bytes);
     implement_write!(write_u16_le, u16, to_le_bytes);
     implement_write!(write_u32_le, u32, to_le_bytes);
@@ -241,32 +187,20 @@ impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
     }
 }
 
-impl<T: ConstWriterAdapter, const N: usize> ConstWriter<T, {N}> {
-    pub fn write_slice<const M: usize>(self, value: &[u8; M]) -> ConstWriter<T, { N-M }>/* where Assert::<{N >= M}>: IsTrue*/ {
+impl<'a, T: ConstWriterAdapter<'a>, const N: usize> ConstWriter<'a, T, {N}> {
+    pub fn write_slice<const M: usize>(self, value: &[u8; M]) -> ConstWriter<'a, T, { N-M }>/* where Assert::<{N >= M}>: IsTrue*/ {
         unsafe {
             ConstWriter {
-                writer_adapter: self.writer_adapter.write(value)
+                writer_adapter: self.writer_adapter.write(value),
+                _marker: PhantomData
             }
         }
     }
 }
 
-pub trait ConstWrite<'a, T: ConstWriterAdapter> {
+pub trait ConstWrite<'a, T: ConstWriterAdapter<'a>> {
     /// Get [`ConstWriter`] to write `N` bytes. Performs checks/allocations so at least `N` bytes
-    fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<T, {N}>;
-}
-
-impl<'a, 'inner> ConstWrite<'a, SliceWriterAdapter<'a, 'inner>> for &'inner mut [u8] {
-    /// Get const writer for `N` bytes. Panics if slice too short
-    fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<SliceWriterAdapter<'a, 'inner>, { N }> {
-        // `SliceWriterAdapter::from` checks that slice len greater or equal than `N`.
-        // Because we ensure that ConstWriter never writes more than `N` bytes
-        unsafe {
-            ConstWriter {
-                writer_adapter: SliceWriterAdapter::new::<{ N }>(self)
-            }
-        }
-    }
+    fn const_writer<const N: usize>(&'a mut self) -> ConstWriter<'a, T, {N}>;
 }
 
 #[cfg(test)]
@@ -275,70 +209,5 @@ mod tests {
     use crate::{ConstWrite};
     use test::Bencher;
 
-    #[test]
-    fn slice_write() {
-        let mut buff = [0u8; 10];
-        buff.as_mut().const_writer::<10>()
-            .write_u32_le(34)
-            .write_u16_le(3)
-            .write_u16_le(4)
-            .write_u16_le(5);
-        assert_eq!(buff, [34, 0, 0, 0, 3, 0, 4, 0, 5, 0]);
-    }
 
-    #[bench]
-    fn bench_const_writer_le(b: &mut Bencher) {
-        let mut buff = [0u8; 32];
-        b.iter(|| {
-            let mut ref_buff = buff.as_mut() as &mut [u8];
-            ref_buff.const_writer::<31>()
-                .write_u8_le(0x01)
-                .write_u16_le(0x0203)
-                .write_u32_le(0x04050607)
-                .write_u64_le(0x08090A0B0C0D0E0F)
-                .write_u128_le(0x101112131415161718191A1B1C1D1E1F);
-        });
-    }
-    #[bench]
-    fn bench_bytes_le(b: &mut Bencher) {
-        use bytes::BufMut;
-        let mut buff = [0u8; 32];
-        b.iter(|| {
-            let mut ref_buff = buff.as_mut() as &mut [u8];
-            ref_buff.put_u8(0x01);
-            ref_buff.put_u16_le(0x0203);
-            ref_buff.put_u32_le(0x04050607);
-            ref_buff.put_u64_le(0x08090A0B0C0D0E0F);
-            ref_buff.put_u128_le(0x101112131415161718191A1B1C1D1E1F);
-        });
-    }
-
-    #[bench]
-    fn bench_const_writer_be(b: &mut Bencher) {
-        let mut buff = [0u8; 32];
-        b.iter(|| {
-            let mut ref_buff = buff.as_mut() as &mut [u8];
-            ref_buff.const_writer::<31>()
-                .write_u8_be(0x01)
-                .write_u16_be(0x0203)
-                .write_u32_be(0x04050607)
-                .write_u64_be(0x08090A0B0C0D0E0F)
-                .write_u128_be(0x101112131415161718191A1B1C1D1E1F);
-            assert_eq!(ref_buff.len(), 1);
-        });
-    }
-    #[bench]
-    fn bench_bytes_be(b: &mut Bencher) {
-        use bytes::BufMut;
-        let mut buff = [0u8; 32];
-        b.iter(|| {
-            let mut ref_buff = buff.as_mut() as &mut [u8];
-            ref_buff.put_u8(0x01);
-            ref_buff.put_u16(0x0203);
-            ref_buff.put_u32(0x04050607);
-            ref_buff.put_u64(0x08090A0B0C0D0E0F);
-            ref_buff.put_u128(0x101112131415161718191A1B1C1D1E1F);
-            assert_eq!(ref_buff.len(), 1);
-        });
-    }
 }
