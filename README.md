@@ -3,9 +3,12 @@ Const Writer
 [![Documentation](https://docs.rs/const-writer/badge.svg)](https://docs.rs/const-writer)
 [![Latest version](https://img.shields.io/crates/v/const-writer.svg)](https://crates.io/crates/const-writer)
 
-####[Documentation](https://docs.rs/const-writer/badge.svg)
+[Documentation](https://docs.rs/const-writer/badge.svg)
+
+# DOESN"T COMPILE WITH CURRRENT RUST VERSION
 
 Compile time verified byte writer for slice and vector.
+
 
 ### Install
 ```toml
